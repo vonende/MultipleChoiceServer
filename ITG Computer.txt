@@ -1,0 +1,39 @@
+MULTI;
+Welche dieser Komponenten gehört zur Hardware? (2P);;
+Windows; CPU; Word; Internet; HTML; RAM; 
+B=1 F=1
+
+MC;
+Was bedeutet die Abkürzung CPU? (1P);;
+Central Processing Unit;
+Certain Periodic Usage;
+Central Power Utility;
+Circular Printer Unit;
+Current Primary User;
+A=1
+
+TEXT;
+Nenne 3 Eingabegeräte. (2P);;2
+
+MULTI;
+Welche dieser Passwörter sind sehr sicher? (2P);;
+12345678;
+MaxMustermann;
+IlITGU!4e;
+Passwort123;
+6274839182736923;
+C=1 E=1
+
+TEXT;
+Erkläre das EVA-Prinzip in eigenen Worten. (4P);;4
+# Lösung: Eingabe (z. B. Tastatur), Verarbeitung (z. B. CPU), Ausgabe (z. B. Monitor).
+
+TEXT;
+Nenne drei Regeln für sichere Passwörter. (2P);;2
+# Lösung: Mindestens 8 Zeichen, Groß-/Kleinbuchstaben, Zahlen, 
+#         Sonderzeichen, keine persönlichen Daten.
+
+TEXT;
+Was ist der Unterschied zwischen einem Ordner und einer Datei? (2P);;2
+# Lösung: Ein Ordner ist ein Behälter für Dateien (wie ein Fach im Schrank),  
+#         eine Datei ist ein einzelnes Dokument (wie ein Blatt Papier).

@@ -1,0 +1,45 @@
+# Einstellungen für den Test haben das folgende Format:
+# ! ; Titel des Tests ; Testdauer ; zurück
+# Das Ausrufezeichen und die Semikolons sind obligatorisch. 
+# Leerzeichen oder Tabs neben den Semikolons werden gefiltert.
+# Ist das einzelne Wort "zurück" mit angegeben, können Schüler beim Test zu den
+# vorigen Fragen zurückgehen. Da dies das gegenseitige Abgucken erleichtert,
+# kann es ausgeschaltet werden.
+#
+# Leere Zeilen oder Zeilen, die mit einem Hashtag (#) beginnen, werden übersprungen.
+#
+# Testfragen haben das folgende Format: 
+# Typ ; Frage ; Bild ; Antwort1 ; Antwort2 ; ... ; AntwortN ; Punktwerte
+# 
+# Es gibt die folgenden Typen für Fragen:
+# SINGLE: Nur eine Antwort kann ausgewählt werden. 
+#         Pro Antwort kann ein Punktwert festgelegt werden (z. B. A=3 C=2 E=1).
+# MULTI:  Mehrere Antworten können ausgewählt werden. 
+#         Auch hier kann pro Antwort ein Punktwert festgelegt werden.
+#         Es können auch negative Punkte vergeben werden.
+# TEXT:   Eine freie Antwort kann als Text eingegeben werden. 
+#         Punktwerte enthält die maximal mögliche Punktzahl für den Text (z.B. 5)
+#
+# !!! Einzelne Fragen müssen durch mindestens eine Leerzeile getrennt werden !!!
+
+! ; Beispieltest ; 10 ; kein zurück möglich 
+
+SINGLE ; Welche Farbe hat eine Zitrone? ;; Gelb ; Grün ; Lila ; Rot ; A=2 B=1
+
+MULTI ; Welche Form hat dieses Bild? ; diagramm.png ; Rechteck ; Viereck ; Dreieck ; Linie ; A=2 B=1 D=-1
+
+TEXT ; 
+Dieser Satz enthält ein Semikolon (\;), 
+obwohl es ein Trennzeichen ist. 
+Wie geht das? 
+;; 4
+
+TEXT ; Beschreibe, was auf dem Bild zu sehen ist. ; karte.jpg ; 4
+
+MULTI; 
+Welche Tiere sind Säugetiere?;;
+Katze;
+Spinne;
+Hund;
+Fisch;
+A=1 B=-1 C=1 D=0

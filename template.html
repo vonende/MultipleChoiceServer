@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="de">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Online-Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background: #f4f4f9;
+        }
+
+        .container {
+            max-width: 600px;
+            margin: auto;
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0 20px 0;
+            box-sizing: border-box;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: #007dc5;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        button:hover {
+            background: #005a92;
+        }
+
+        .frage-box {
+            display: none;
+        }
+
+        .frage-box.aktiv {
+            display: block;
+            border: 1px solid #ccc;
+            padding: 10px;
+            border-radius: 8px;
+            background-color: #fcfcfc;
+            box-shadow: 2px 2px 5px rgba(0, 0, 0, 0.1);
+            width: 100%;
+            max-width: 800px;
+            margin: 10px auto;
+            box-sizing: border-box;
+        }
+
+        .timer {
+            display: none;
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: #d9534f;
+            color: white;
+            padding: 10px 20px;
+            font-weight: bold;
+            border-radius: 5px;
+            z-index: 1000;
+        }
+
+        .img-container {
+            margin: 15px 0;
+        }
+
+        img {
+            max-width: 100%;
+            max-height: 300px;
+            border: 1px solid #ddd;
+        }
+
+        textarea {
+            width: 100%;
+            height: 100px;
+            margin-top: 10px;
+            padding: 10px;
+            font-family: sans-serif;
+            box-sizing: border-box;
+            border-radius: 5px;
+            border: 1px solid #ccc;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+
+        /* Vollbild-Stile */
+        :fullscreen .timer {
+            display: block;
+        }
+
+        .flex-container {
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        #test-container {
+            display: none;
+            background: white;
+            width: 100vw;
+            box-sizing: border-box;
+            padding: 15px;
+            overflow-y: auto;
+        }
+
+        #test-container:fullscreen {
+            background: lightgray;
+            display: block;
+        }
+
+        #test-form {
+            position: relative;
+            /* Wichtig für die innere Struktur */
+            display: flex;
+            flex-direction: column;
+            /* Stapelt Inhalt und Buttons vertikal */
+            justify-content: space-between;
+            /* Schiebt Inhalt nach oben und Buttons nach unten */
+            min-height: 250px;
+            height: 100%;
+        }
+
+        #btn-container {
+            display: flex;
+            justify-content: space-between;
+            margin-top: auto;
+        }
+
+        #end-btn {
+            background: #ff8080;
+        }
+
+        #end-btn:hover {
+            background: #F9302c;
+        }
+    </style>
+
+</head>
+
+<body>
+    <!-- Login-Bereich -->
+    <div id="login-container" class="container">
+        <h1>{{.Titel}}</h1>
+        <h2>Anmeldung</h2>
+        <form id="login-form">
+            <label for="name">Gib deinen vollständigen Namen ein:</label>
+            <input type="text" id="name" name="name" placeholder="Nachname, Vorname" required autocomplete="off">
+            <button type="submit">Test starten</button>
+        </form>
+    </div>
+
+    <!-- Test-Bereich (wird in Vollbild geschaltet) -->
+    <div id="test-container">
+        <div class="flex-container">
+            <div class="timer" id="timer">Zeit: <span id="timer-display"></span></div>
+            <form action="/submit" method="POST" id="test-form">
+                <input type="hidden" id="schuelerName" name="schuelerName" value="">
+                <div id="test-content" class="test-content">
+                    <p>Fragen werden geladen...</p>
+                </div>
+                <div id="btn-container">
+                    <button type="button" id="back-btn">Zurück</button>
+                    <button type="button" id="end-btn">Test beenden und abgeben</button>
+                    <button type="button" id="next-btn">Weiter</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let totalSeconds = 0;
+
+        function updateTimer() {
+            let m = Math.floor(totalSeconds / 60);
+            let s = totalSeconds % 60;
+            if (s < 10) s = "0" + s;
+            document.getElementById("timer-display").innerText = m + ":" + s;
+            if (totalSeconds <= 0) {
+                document.getElementById("test-form").submit();
+            } else {
+                totalSeconds--;
+                setTimeout(updateTimer, 1000);
+            }
+        }
+
+        document.getElementById('end-btn').addEventListener('click', () => {
+            if (confirm("Bist du sicher, dass du den Test beenden und abgeben möchtest?")) {
+                document.getElementById('test-form').submit();
+            }
+        });
+
+        document.getElementById('back-btn').addEventListener('click', () => {
+            const currentDiv = document.querySelector('.test-content .frage-box.aktiv');
+
+            if (currentDiv) {
+                // Den direkten Vorgänger im DOM ermitteln
+                const nextDiv = currentDiv.previousElementSibling;
+
+                // Nur wechseln, wenn es überhaupt einen Vorgänger gibt
+                if (nextDiv) {
+                    currentDiv.classList.remove('aktiv'); // Altes Element verstecken
+                    nextDiv.classList.add('aktiv');       // Nächstes Element anzeigen
+                } else {
+                    alert("Dies ist die erste Frage. Du kannst nicht weiter zurückgehen.");
+                }
+            } else {
+                // Wenn kein aktives Element gefunden wurde, das erste Element aktivieren
+                const firstDiv = document.querySelector('.test-content .frage-box');
+                if (firstDiv) {
+                    firstDiv.classList.add('aktiv');
+                } else {
+                    alert("Ich kann keine Fragen finden. Bitte überprüfe, ob die Fragen korrekt geladen wurden.");
+                }
+            }
+        });
+
+        document.getElementById('next-btn').addEventListener('click', () => {
+            const currentDiv = document.querySelector('.test-content .frage-box.aktiv');
+
+            if (currentDiv) {
+                // Den direkten Nachfolger im DOM ermitteln
+                const nextDiv = currentDiv.nextElementSibling;
+
+                // Nur wechseln, wenn es überhaupt einen Nachfolger gibt
+                if (nextDiv) {
+                    currentDiv.classList.remove('aktiv'); // Altes Element verstecken
+                    nextDiv.classList.add('aktiv');       // Nächstes Element anzeigen
+                } else {
+                    alert("Dies ist die letzte Frage. Bitte beende den Test.");
+                }
+            } else {
+                // Wenn kein aktives Element gefunden wurde, das erste Element aktivieren
+                const firstDiv = document.querySelector('.test-content .frage-box');
+                if (firstDiv) {
+                    firstDiv.classList.add('aktiv');
+                } else {
+                    alert("Ich kann keine Fragen finden. Bitte überprüfe, ob die Fragen korrekt geladen wurden.");
+                }
+            }
+        });
+
+        document.getElementById('login-form').addEventListener('submit', async function (e) {
+            e.preventDefault();
+
+            const name = document.getElementById('name').value;
+            const testContainer = document.getElementById('test-container');
+            const loginContainer = document.getElementById('login-container');
+
+            document.getElementById('schuelerName').value = name; // Setze den Namen im versteckten Input-Feld
+
+            // 1. VOLLBILD STARTEN (Direkt im Klick-Event ausführen!)
+            try {
+                if (testContainer.requestFullscreen) {
+                    await testContainer.requestFullscreen();
+                } else if (testContainer.mozRequestFullScreen) { // Firefox
+                    await testContainer.mozRequestFullScreen();
+                }
+            } catch (err) {
+                alert("Browser hat den Vollbildmodus blockiert. Bitte erlauben Sie Vollbild.");
+                return;
+            }
+
+            // 2. Ansicht wechseln
+            loginContainer.style.display = 'none';
+            testContainer.style.display = 'block';
+
+            // 3. Daten asynchron an das Go-Backend senden (POST)
+            try {
+                const response = await fetch('/start-test', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name: name })
+                });
+
+                if (!response.ok) throw new Error("Fehler beim Laden der Fragen.");
+
+                // HTML-Inhalt vom Go-Server in den Container einfügen
+                const htmlQuestions = await response.text();
+                document.getElementById('test-content').innerHTML = htmlQuestions;
+
+
+            } catch (error) {
+                document.getElementById('test-content').innerHTML = `<p style="color:red;">${error.message}</p>`;
+            }
+            totalSeconds = document.getElementById("timer-dauer").value * 60;
+            updateTimer();
+
+            document.getElementById('zurueck').value === 'true' ? document.getElementById('back-btn').style.display = 'inline-block' : document.getElementById('back-btn').style.display = 'none';
+
+        });
+
+        // 4. Vollbild verlassen via Button
+        document.getElementById('end-btn').addEventListener('submit', function () {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.mozCancelFullScreen) { // Firefox
+                document.mozCancelFullScreen();
+            }
+            document.getElementById('test-form').submit();
+        });
+
+        // 5. Betrugsschutz: Erkennen, wenn der User die ESC-Taste drückt
+        function handleFullscreenChange() {
+            if (!document.fullscreenElement && !document.mozFullScreenElement) {
+                // User hat das Vollbild unerlaubt verlassen
+                document.getElementById('test-form').submit();
+            }
+        }
+
+        document.addEventListener('fullscreenchange', handleFullscreenChange);
+        document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+    </script>
+
+</body>
+
+</html>
