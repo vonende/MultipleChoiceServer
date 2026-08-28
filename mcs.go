@@ -87,7 +87,7 @@ func main() {
 	// oder
 	// go run main.go -in=Testdatei -out=Ergebnisse
 	// Wenn kein Dateiname angegeben wird, wird der Wert aus den Einstellungen oder ein Standardwert verwendet.
-	inputFilePtr := flag.String("in", "Beispielfragen", "Dateiname für die Fragen")
+	inputFilePtr := flag.String("in", "Fragen", "Dateiname für die Fragen")
 	resultFilePtr := flag.String("out", "Ergebnisse", "Dateiname für die Ergebnisdatei")
 	flag.Parse()
 	if flag.NArg() > 0 {
@@ -273,13 +273,13 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 
 		switch frage.Typ {
 		case "SINGLE":
-			punkte := bewerteMultiAntworten(frage, []string{gegebeneAntwort})
+			punkte := bewerteAntworten(frage, []string{gegebeneAntwort})
 			csv.WriteString(fmt.Sprintf("%d;", punkte))
 			maxAutoPunkte += frage.Punkte
 			autoPunkte += punkte
 			bericht.WriteString(fmt.Sprintf("Frage %d (SINGLE): %d / %d Pkt\n", i+1, punkte, frage.Punkte))
 		case "MULTI":
-			punkte := bewerteMultiAntworten(frage, gegebeneAntworten)
+			punkte := bewerteAntworten(frage, gegebeneAntworten)
 			csv.WriteString(fmt.Sprintf("%d;", punkte))
 			maxAutoPunkte += frage.Punkte
 			autoPunkte += punkte
@@ -442,9 +442,13 @@ func ladeFragen(filename string) ([]Frage, error) {
 			csv.WriteString(fmt.Sprintf("%d;", pkt))
 		case typ == "MULTI":
 			frage.Punktwerte = parsePunktwerte(pktValue)
-			for _, value := range frage.Punktwerte {
+			for str, value := range frage.Punktwerte {
 				if value > 0 {
 					pkt += value
+				}
+				if str == "MAX" {
+					pkt = value
+					break
 				}
 			}
 			frage.Punkte = pkt
@@ -475,13 +479,41 @@ func filterDateiname(dateiname string) string {
 	return reg.ReplaceAllString(dateiname, "")
 }
 
-// bewerteMultiAntworten bewertet die Antworten auf eine MULTI-Frage und gibt die Gesamtpunktzahl zurück.
-func bewerteMultiAntworten(frage Frage, antworten []string) int {
+// enthaeltString prüft, ob das Stringarray den Suchstring enthält. Groß-/Kleinschreibung wird ignoriert und führende/trailing Whitespaces werden entfernt.
+func enthaeltString(suche *string, s *[]string) bool {
+	for _, str := range *s {
+		if strings.Compare(*suche, strings.TrimSpace(strings.ToUpper(str))) == 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// bewerteAntworten bewertet die Antworten auf eine MULTI-Frage und gibt die Gesamtpunktzahl zurück.
+func bewerteAntworten(frage Frage, antworten []string) int {
 	punkte := 0
-	for _, antwort := range antworten {
-		antwort = strings.TrimSpace(strings.ToUpper(antwort))
-		if wert, ok := frage.Punktwerte[antwort]; ok {
-			punkte += wert
+	if maxPunkte, ok := frage.Punktwerte["MAX"]; ok {
+		punkte = maxPunkte
+		for i := 0; i < len(frage.Punktwerte)-1; i++ {
+			nr := string(rune('A' + i))
+			if wert, ok := frage.Punktwerte[nr]; ok {
+				if wert > 0 {
+					if !enthaeltString(&nr, &antworten) {
+						punkte--
+					}
+				} else {
+					if enthaeltString(&nr, &antworten) {
+						punkte--
+					}
+				}
+			}
+		}
+	} else {
+		for _, antwort := range antworten {
+			antwort = strings.TrimSpace(strings.ToUpper(antwort))
+			if wert, ok := frage.Punktwerte[antwort]; ok {
+				punkte += wert
+			}
 		}
 	}
 	if punkte < 0 {
@@ -490,7 +522,7 @@ func bewerteMultiAntworten(frage Frage, antworten []string) int {
 	return punkte
 }
 
-// parsePunktwerte parst eine Zeichenkette mit Punktwerten im Format "A=1;B=0;C=-1"
+// parsePunktwerte parst eine Zeichenkette mit Punktwerten im Format "A=1 B=0 C=-1"
 // und gibt eine Map zurück, die die Buchstaben den entsprechenden Punktwerten zuordnet.
 func parsePunktwerte(str string) map[string]int {
 	result := make(map[string]int)
@@ -498,7 +530,7 @@ func parsePunktwerte(str string) map[string]int {
 		return result
 	}
 
-	r := regexp.MustCompile(`[A-Za-z] *\t*= *\t*-*\d+`)
+	r := regexp.MustCompile(`[A-Za-z]+ *\t*= *\t*-*\d+`)
 	strs := r.FindAllString(str, -1)
 	if strs == nil {
 		return result
