@@ -185,7 +185,7 @@
 
     <script>
         let totalSeconds = 0;
-
+        
         function updateTimer() {
             let m = Math.floor(totalSeconds / 60);
             let s = totalSeconds % 60;
@@ -306,7 +306,7 @@
         });
 
         // 4. Vollbild verlassen via Button
-        document.getElementById('end-btn').addEventListener('submit', function () {
+        document.getElementById('end-btn').addEventListener('click', function () {
             if (document.exitFullscreen) {
                 document.exitFullscreen();
             } else if (document.mozCancelFullScreen) { // Firefox
@@ -315,16 +315,37 @@
             document.getElementById('test-form').submit();
         });
 
-        // 5. Betrugsschutz: Erkennen, wenn der User die ESC-Taste drückt
+        let testSubmitted = false;
+
+        // 5. Betrugsschutz: Erkennen, wenn der User die ESC-Taste drückt ...
         function handleFullscreenChange() {
-            if (!document.fullscreenElement && !document.mozFullScreenElement) {
-                // User hat das Vollbild unerlaubt verlassen
-                document.getElementById('test-form').submit();
+            if (document.fullscreenElement || document.mozFullScreenElement || testSubmitted) {
+                return;
             }
+            // User hat das Vollbild unerlaubt verlassen
+            testSubmitted = true;
+            document.getElementById('test-form').submit();
+            
         }
 
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         document.addEventListener('mozfullscreenchange', handleFullscreenChange);
+
+
+        // oder der User das Browserfenster verlässt (z.B. Alt+Tab, Taskwechsel, etc.)
+        function submitOnBrowserBlur() {
+            const testContainer = document.getElementById('test-container');
+
+            if (testSubmitted || testContainer.style.display !== 'block') {
+                return;
+            }
+
+            testSubmitted = true;
+            document.getElementById('test-form').submit();
+        }
+
+        window.addEventListener('blur', submitOnBrowserBlur);
+
     </script>
 
 </body>

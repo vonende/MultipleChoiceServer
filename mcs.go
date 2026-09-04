@@ -17,9 +17,14 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
+
+// *******************************************
+// ************* Typdefinitionen *************
+// *******************************************
 
 // Struktur für die eingehenden POST-Daten (JSON)
 type LoginRequest struct {
@@ -37,6 +42,11 @@ type Frage struct {
 	Punkte     int            // Gesamtpunktzahl für die Frage
 }
 
+type AktiveTests struct {
+	Schueler   string
+	TestBeginn time.Time
+}
+
 // TestDaten enthält die Testeinstellungen und die Liste der Fragen.
 type TestDaten struct {
 	Titel            string
@@ -45,8 +55,12 @@ type TestDaten struct {
 	Fragen           []Frage
 	Zurueck          bool
 	AnzSchueler      int
-	Schueler         []string
+	aktiveTests      []AktiveTests
 }
+
+// *******************************************
+// ************ Globale Variablen ************
+// *******************************************
 
 // testdaten ist eine globale Variable, die die Testeinstellungen und Fragen enthält.
 // Sie wird beim Start des Programms mit Standardwerten initialisiert und später
@@ -61,6 +75,16 @@ var testdaten = &TestDaten{
 
 // templates ist ein globales Template-Objekt, das die HTML-Vorlage für die Webseite enthält.
 var templates = template.Must(template.ParseFiles("template.html"))
+
+// mutex schützt den gemeinsamen Zugriff auf die aktiven Schüler.
+var mutex sync.Mutex
+
+// aktiveTests enthält die aktuell laufenden Tests.
+var aktiveTests = &AktiveTests{}
+
+// ********************************************
+// *************** Mainfunktion ***************
+// ********************************************
 
 // main startet den HTTP-Server, lädt die Fragen und Einstellungen und wartet auf eingehende Anfragen.
 func main() {
@@ -152,8 +176,16 @@ func main() {
 		log.Fatalf("Server-Shutdown fehlgeschlagen: %s\n", err)
 	}
 
+	for _, s := range testdaten.aktiveTests {
+		log.Printf("WARNUNG: Schüler %s hat den Test nicht abgegeben.\n", s.Schueler)
+	}
+
 	log.Println("Server erfolgreich heruntergefahren.")
 }
+
+// ********************************************
+// ************ Handler-Funktionen ************
+// ********************************************
 
 // handleLogin rendert die Login-Seite, auf der der Schüler seinen Namen eingeben kann.
 func handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -184,9 +216,16 @@ func handleStartTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	aktiverTest := AktiveTests{
+		Schueler:   req.Name,
+		TestBeginn: time.Now(),
+	}
+
+	mutex.Lock()
 	testdaten.AnzSchueler++
-	testdaten.Schueler = append(testdaten.Schueler, req.Name)
+	testdaten.aktiveTests = append(testdaten.aktiveTests, aktiverTest)
 	log.Printf("%s hat mit dem Test begonnen. Es sind %d Schüler aktiv.", req.Name, testdaten.AnzSchueler)
+	mutex.Unlock()
 
 	// Zufällige Reihenfolge der Fragen generieren
 	// z ist eine Permutation der Indizes der Fragen und wird in einem sclice von int gespeichert.
@@ -221,10 +260,12 @@ func handleStartTest(w http.ResponseWriter, r *http.Request) {
 		}
 		switch frage.Typ {
 		case "SINGLE":
+			fmt.Fprintf(w, `<p>Wähle genau eine Antwort:</p>`)
 			for optIndex, opt := range frage.Optionen {
 				fmt.Fprintf(w, `<label><input type="radio" name="frage_%d" value="%s"> %s</label><br>`, frage.ID, string(rune('A'+optIndex)), template.HTMLEscapeString(opt))
 			}
 		case "MULTI":
+			fmt.Fprintf(w, `<p>Wähle alle zutreffenden Antworten:</p>`)
 			for optIndex, opt := range frage.Optionen {
 				fmt.Fprintf(w, `<label><input type="checkbox" name="frage_%d" value="%s"> %s</label><br>`, frage.ID, string(rune('A'+optIndex)), template.HTMLEscapeString(opt))
 			}
@@ -248,21 +289,21 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.ParseForm()
-	name := r.FormValue("schuelerName")
-
-	autoPunkte := 0
-	maxAutoPunkte := 0
-	IP := getClientIP(r)
-
 	// String Builder für den Bericht
 	var bericht strings.Builder
 	var csv strings.Builder
 
-	csv.WriteString(fmt.Sprintf("%s; %s; %s;", name, IP, time.Now().Format("2006-01-02 15:04")))
+	r.ParseForm()
+	name := r.FormValue("schuelerName")
+	index, gefunden := sucheAktivenTest(name)
+	autoPunkte := 0
+	maxAutoPunkte := 0
+	IP := getClientIP(r)
+
+	csv.WriteString(fmt.Sprintf("%s; %s; %s; %s; %s;", name, IP, testdaten.aktiveTests[index].TestBeginn.Format(time.DateTime), time.Now().Format(time.DateTime), time.Since(testdaten.aktiveTests[index].TestBeginn).Truncate(time.Second)))
 
 	bericht.WriteString("\n\n================================================================================\n")
-	bericht.WriteString(fmt.Sprintf("NAME: %s\nDATUM: %s\nIP: %s\n", name, time.Now().Format("2006-01-02 15:04"), IP))
+	bericht.WriteString(fmt.Sprintf("NAME:   %s\nBEGINN: %s\nENDE:   %s\nDAUER:  %s\nIP:     %s\n", name, testdaten.aktiveTests[index].TestBeginn.Format(time.DateTime), time.Now().Format(time.DateTime), time.Since(testdaten.aktiveTests[index].TestBeginn).Truncate(time.Second), IP))
 
 	for i, frage := range testdaten.Fragen {
 		bericht.WriteString("--------------------------------------------------------------------------------\n")
@@ -296,14 +337,13 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	bericht.WriteString(fmt.Sprintf("AUTO-WERTUNG: %d / %d Punkte\n", autoPunkte, maxAutoPunkte))
 	bericht.WriteString("================================================================================\n")
 
-	gefunden := false
-	for i, s := range testdaten.Schueler {
-		if s == name {
-			// Speichern
-			saveResult(bericht.String(), csv.String())
+	if gefunden {
 
-			// Feedback an Schüler
-			fmt.Fprint(w, `
+		// Speichern
+		speichereErgebnis(bericht.String(), csv.String())
+
+		// Feedback an Schüler
+		fmt.Fprint(w, `
 						<!DOCTYPE html>
 						<html lang="de">
 						<head>
@@ -312,20 +352,18 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 						</head>
 						<body>
 							<p>Deine Antworten wurden gespeichert.</p>`)
-			fmt.Fprintf(w, "<p>Deine automatisierte Auswertung der Multiple-Choice-Fragen: <strong>%d / %d</strong> Punkten.</p>", autoPunkte, maxAutoPunkte)
-			fmt.Fprint(w, `
+		fmt.Fprintf(w, "<p>Deine automatisierte Auswertung der Multiple-Choice-Fragen: <strong>%d / %d</strong> Punkten.</p>", autoPunkte, maxAutoPunkte)
+		fmt.Fprint(w, `
 							<br><a href="/">Zum Start</a>
 						</body>
 					`)
+		mutex.Lock()
+		testdaten.AnzSchueler--
+		log.Printf("%s hat den Test abgegeben. Es sind noch %d Schüler aktiv.\n", name, testdaten.AnzSchueler)
+		testdaten.aktiveTests = slices.Delete(testdaten.aktiveTests, index, index+1)
+		mutex.Unlock()
 
-			testdaten.AnzSchueler--
-			log.Printf("%s hat den Test abgegeben. Es sind noch %d Schüler aktiv.\n", name, testdaten.AnzSchueler)
-			testdaten.Schueler = slices.Delete(testdaten.Schueler, i, i+1)
-			gefunden = true
-			break
-		}
-	}
-	if !gefunden {
+	} else {
 		fmt.Fprint(w, `
 					<!DOCTYPE html>
 					<html lang="de">
@@ -343,6 +381,43 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// ********************************************
+// ************** Kernfunktionen **************
+// ********************************************
+
+// bewerteAntworten bewertet die Antworten auf eine MULTI-Frage und gibt die Gesamtpunktzahl zurück.
+func bewerteAntworten(frage Frage, antworten []string) int {
+	punkte := 0
+	if maxPunkte, ok := frage.Punktwerte["MAX"]; ok {
+		punkte = maxPunkte
+		for i := 0; i < len(frage.Punktwerte)-1; i++ {
+			nr := string(rune('A' + i))
+			if wert, ok := frage.Punktwerte[nr]; ok {
+				if wert > 0 {
+					if !enthaeltString(&nr, &antworten) {
+						punkte--
+					}
+				} else {
+					if enthaeltString(&nr, &antworten) {
+						punkte--
+					}
+				}
+			}
+		}
+	} else {
+		for _, antwort := range antworten {
+			antwort = strings.TrimSpace(strings.ToUpper(antwort))
+			if wert, ok := frage.Punktwerte[antwort]; ok {
+				punkte += wert
+			}
+		}
+	}
+	if punkte < 0 {
+		punkte = 0
+	}
+	return punkte
+}
+
 // ladeFragen liest die Fragen aus der angegebenen Datei ein und gibt sie als Slice von Frage-Strukturen zurück.
 // Die Datei sollte im Format "Typ|Fragetext|Bild|Optionen|Punktwerte" vorliegen, wobei Typ "SINGLE", "MULTI" oder "TEXT" sein kann.
 // Kommentare in der Datei beginnen mit "#" und werden ignoriert. Testeinstellungen können mit "!" angegeben werden.
@@ -355,11 +430,11 @@ func ladeFragen(filename string) ([]Frage, error) {
 		return nil, err
 	}
 
-	lines := prepareLines(string(data))
+	lines := generiereAbsaetze(string(data))
 
 	var result []Frage
 	var csv strings.Builder
-	csv.WriteString(fmt.Sprintf("Aaallerbeste; %s; %s;", getIP(), time.Now().Format("2006-01-02 15:04"))) // Headerzeile für CSV-Datei
+	csv.WriteString(fmt.Sprintf("Aaallerbeste; %s; %s; %s; 0s;", getIP(), time.Now().Format(time.DateTime), time.Now().Format(time.DateTime))) // Headerzeile für CSV-Datei
 
 	var fragenCounter int = 0
 
@@ -465,61 +540,9 @@ func ladeFragen(filename string) ([]Frage, error) {
 		fragenCounter++
 		result = append(result, frage)
 	}
-	csv.WriteString("\n")        // Zeilenumbruch am Ende der Zeile im CSV
-	saveResult("", csv.String()) // Speichern der CSV-Datei mit den Punktzahlen
+	csv.WriteString("\n")               // Zeilenumbruch am Ende der Zeile im CSV
+	speichereErgebnis("", csv.String()) // Speichern der CSV-Datei mit den Punktzahlen
 	return result, nil
-}
-
-// filterDateiname entfernt alle ungültigen Zeichen aus dem Dateinamen,
-// um sicherzustellen, dass der Dateiname gültig ist.
-func filterDateiname(dateiname string) string {
-	// Erstelle Regex: Suche nach allen Zeichen außer Buchstaben, Zahlen, Bindestrich und Punkt
-	reg := regexp.MustCompile(`[^a-zA-Z0-9.\-_\\\/äÄöÖüÜß\(\) ]`)
-	// Löscht alle ungültigen Zeichen
-	return reg.ReplaceAllString(dateiname, "")
-}
-
-// enthaeltString prüft, ob das Stringarray den Suchstring enthält. Groß-/Kleinschreibung wird ignoriert und führende/trailing Whitespaces werden entfernt.
-func enthaeltString(suche *string, s *[]string) bool {
-	for _, str := range *s {
-		if strings.Compare(*suche, strings.TrimSpace(strings.ToUpper(str))) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// bewerteAntworten bewertet die Antworten auf eine MULTI-Frage und gibt die Gesamtpunktzahl zurück.
-func bewerteAntworten(frage Frage, antworten []string) int {
-	punkte := 0
-	if maxPunkte, ok := frage.Punktwerte["MAX"]; ok {
-		punkte = maxPunkte
-		for i := 0; i < len(frage.Punktwerte)-1; i++ {
-			nr := string(rune('A' + i))
-			if wert, ok := frage.Punktwerte[nr]; ok {
-				if wert > 0 {
-					if !enthaeltString(&nr, &antworten) {
-						punkte--
-					}
-				} else {
-					if enthaeltString(&nr, &antworten) {
-						punkte--
-					}
-				}
-			}
-		}
-	} else {
-		for _, antwort := range antworten {
-			antwort = strings.TrimSpace(strings.ToUpper(antwort))
-			if wert, ok := frage.Punktwerte[antwort]; ok {
-				punkte += wert
-			}
-		}
-	}
-	if punkte < 0 {
-		punkte = 0
-	}
-	return punkte
 }
 
 // parsePunktwerte parst eine Zeichenkette mit Punktwerten im Format "A=1 B=0 C=-1"
@@ -552,8 +575,10 @@ func parsePunktwerte(str string) map[string]int {
 	return result
 }
 
-// saveResult speichert den Bericht und die CSV-Daten in den entsprechenden Dateien.
-func saveResult(bericht string, csv string) {
+// speichereErgebnis speichert den Bericht und die CSV-Daten in den entsprechenden Dateien.
+func speichereErgebnis(bericht string, csv string) {
+	mutex.Lock()
+	defer mutex.Unlock()
 	if bericht != "" {
 		f, err := os.OpenFile(filterDateiname(testdaten.Ergebnisdatei+".txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
@@ -579,56 +604,33 @@ func saveResult(bericht string, csv string) {
 	}
 }
 
-// getIP ermittelt die lokale IP-Adresse des Servers, indem es eine Verbindung zu einem externen Server (Google DNS) herstellt und die lokale Adresse abruft.
-func getIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80")
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-	localAddr := conn.LocalAddr().(*net.UDPAddr)
-	return localAddr.IP.String()
-}
+// *******************************************
+// ************* Hilfsfunktionen *************
+// *******************************************
 
-// getClientIP extrahiert die IP-Adresse des Clients aus der HTTP-Anfrage.
-func getClientIP(r *http.Request) string {
-	// SplitHostPort trennt die IP vom Port (z.B. "192.168.1.50:54321" -> "192.168.1.50")
-	ip, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr // Fallback, falls kein Port enthalten ist
-	}
-	return ip
-}
-
-// textMaxWidth bricht einen langen Text in mehrere Zeilen um, sodass keine Zeile länger als maxWidth Zeichen ist.
-func textMaxWidth(s string, maxWidth int) string {
-	if len(s) <= maxWidth {
-		return s
-	}
-	fields := strings.Fields(s)
-	var result strings.Builder
-	currentLineLength := 0
-	for _, field := range fields {
-		if currentLineLength+len(field) < maxWidth {
-			result.WriteString(field)
-			result.WriteString(" ")
-			currentLineLength += len(field) + 1
-		} else {
-			result.WriteString("\n")
-			result.WriteString(field)
-			result.WriteString(" ")
-			currentLineLength = len(field) + 1
+// enthaeltString prüft, ob das Stringarray den Suchstring enthält. Groß-/Kleinschreibung wird ignoriert und führende/trailing Whitespaces werden entfernt.
+func enthaeltString(suche *string, s *[]string) bool {
+	for _, str := range *s {
+		if strings.Compare(*suche, strings.TrimSpace(strings.ToUpper(str))) == 0 {
+			return true
 		}
 	}
-	return strings.TrimSpace(result.String())
+	return false
 }
 
-// Sucht in dem String nach doppelten Zeilenumbrüchen,
-// und splittet den String an diesen.
+// filterDateiname entfernt alle ungültigen Zeichen aus dem Dateinamen,
+// um sicherzustellen, dass der Dateiname gültig ist.
+func filterDateiname(dateiname string) string {
+	// Erstelle Regex: Suche nach allen Zeichen außer Buchstaben, Zahlen, Bindestrich und Punkt
+	reg := regexp.MustCompile(`[^a-zA-Z0-9.\-_\\\/äÄöÖüÜß\(\) ]`)
+	// Löscht alle ungültigen Zeichen
+	return reg.ReplaceAllString(dateiname, "")
+}
+
+// Sucht in dem String nach doppelten Zeilenumbrüchen und splittet den String an diesen.
 // In den Substrings werden anschließend führender und hintenstehender
-// Whitespace entfernt.
-// Die Substrings werden als sclice zurückgegeben.
-func prepareLines(str string) []string {
+// Whitespace entfernt. Die Substrings werden als sclice zurückgegeben.
+func generiereAbsaetze(str string) []string {
 	// Alle Kommentarzeilen entfernen
 	var isComment bool = false
 	var backslash bool = false
@@ -684,6 +686,39 @@ func prepareLines(str string) []string {
 	return strs
 }
 
+// getClientIP extrahiert die IP-Adresse des Clients aus der HTTP-Anfrage.
+func getClientIP(r *http.Request) string {
+	// SplitHostPort trennt die IP vom Port (z.B. "192.168.1.50:54321" -> "192.168.1.50")
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr // Fallback, falls kein Port enthalten ist
+	}
+	return ip
+}
+
+// getIP ermittelt die lokale IP-Adresse des Servers, indem es eine Verbindung zu einem externen Server (Google DNS) herstellt und die lokale Adresse abruft.
+func getIP() string {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+	localAddr := conn.LocalAddr().(*net.UDPAddr)
+	return localAddr.IP.String()
+}
+
+func HTMLLinebreak(str string) string {
+	var s strings.Builder
+	for _, r := range str {
+		if r == '\n' {
+			s.WriteString("<br>")
+		} else {
+			s.WriteRune(r)
+		}
+	}
+	return s.String()
+}
+
 // An einem Semikolon wird gesplittet, falls ihm kein
 // Backslash vorangestellt ist.
 func splitLine(str string) []string {
@@ -722,14 +757,35 @@ func splitLine(str string) []string {
 	return strs
 }
 
-func HTMLLinebreak(str string) string {
-	var s strings.Builder
-	for _, r := range str {
-		if r == '\n' {
-			s.WriteString("<br>")
-		} else {
-			s.WriteRune(r)
+// sucheAktivenTest sucht nach einem aktiven Test für den angegebenen Schülernamen.
+func sucheAktivenTest(name string) (int, bool) {
+	for i, s := range testdaten.aktiveTests {
+		if s.Schueler == name {
+			return i, true
 		}
 	}
-	return s.String()
+	return -1, false
+}
+
+// textMaxWidth bricht einen langen Text in mehrere Zeilen um, sodass keine Zeile länger als maxWidth Zeichen ist.
+func textMaxWidth(s string, maxWidth int) string {
+	if len(s) <= maxWidth {
+		return s
+	}
+	fields := strings.Fields(s)
+	var result strings.Builder
+	currentLineLength := 0
+	for _, field := range fields {
+		if currentLineLength+len(field) < maxWidth {
+			result.WriteString(field)
+			result.WriteString(" ")
+			currentLineLength += len(field) + 1
+		} else {
+			result.WriteString("\n")
+			result.WriteString(field)
+			result.WriteString(" ")
+			currentLineLength = len(field) + 1
+		}
+	}
+	return strings.TrimSpace(result.String())
 }
