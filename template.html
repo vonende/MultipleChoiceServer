@@ -200,9 +200,9 @@
         }
 
         document.getElementById('end-btn').addEventListener('click', () => {
-            if (confirm("Bist du sicher, dass du den Test beenden und abgeben möchtest?")) {
+ //           if (confirm("Bist du sicher, dass du den Test beenden und abgeben möchtest?")) {
                 document.getElementById('test-form').submit();
-            }
+ //           }
         });
 
         document.getElementById('back-btn').addEventListener('click', () => {
@@ -216,9 +216,9 @@
                 if (nextDiv) {
                     currentDiv.classList.remove('aktiv'); // Altes Element verstecken
                     nextDiv.classList.add('aktiv');       // Nächstes Element anzeigen
-                } else {
-                    alert("Dies ist die erste Frage. Du kannst nicht weiter zurückgehen.");
-                }
+                } //else {
+                  //  alert("Dies ist die erste Frage. Du kannst nicht weiter zurückgehen.");
+               // }
             } else {
                 // Wenn kein aktives Element gefunden wurde, das erste Element aktivieren
                 const firstDiv = document.querySelector('.test-content .frage-box');
@@ -241,9 +241,9 @@
                 if (nextDiv) {
                     currentDiv.classList.remove('aktiv'); // Altes Element verstecken
                     nextDiv.classList.add('aktiv');       // Nächstes Element anzeigen
-                } else {
-                    alert("Dies ist die letzte Frage. Bitte beende den Test.");
-                }
+                }// else {
+                 //   alert("Dies ist die letzte Frage. Bitte beende den Test.");
+                //}
             } else {
                 // Wenn kein aktives Element gefunden wurde, das erste Element aktivieren
                 const firstDiv = document.querySelector('.test-content .frage-box');

@@ -479,7 +479,7 @@ func ladeFragen(filename string) ([]Frage, error) {
 		}
 
 		if len(parts) < 4 {
-			log.Printf("Zeile %d übersprungen: Zu wenig Spalten\n%s", i+1, lines[i])
+			log.Printf("Zeile %d übersprungen: Zu wenig Spalten\n", i+1)
 			for _, p := range parts {
 				log.Println(p)
 			}
@@ -641,8 +641,8 @@ func generiereAbsaetze(str string) []string {
 			if isComment {
 				continue
 			}
-			backslash = true
 			s.WriteRune(c)
+			backslash = true
 		case '#':
 			if isComment {
 				continue
@@ -659,6 +659,8 @@ func generiereAbsaetze(str string) []string {
 			} else {
 				s.WriteRune(c)
 			}
+			backslash = false
+		case '\r':
 			backslash = false
 		default:
 			if isComment {
@@ -678,9 +680,10 @@ func generiereAbsaetze(str string) []string {
 	str = r.ReplaceAllString(str, "\n\n")
 
 	// Daten zu Fragen in einzelne Strings trennen
+	str = strings.TrimSpace(str)
 	strs := strings.Split(str, "\n\n")
 
-	for i, _ := range strs {
+	for i := range strs {
 		strs[i] = strings.TrimSpace(strs[i])
 	}
 	return strs
@@ -738,22 +741,19 @@ func splitLine(str string) []string {
 		case ';':
 			if backslash {
 				s.WriteRune(r)
-				backslash = false
 			} else {
 				trimedStr = strings.TrimSpace(s.String())
-				if !strings.HasPrefix(trimedStr, "#") {
-					strs = append(strs, trimedStr)
-				}
+				strs = append(strs, trimedStr)
 				s.Reset()
 			}
+			backslash = false
 		default:
 			s.WriteRune(r)
+			backslash = false
 		}
 	}
 	trimedStr = strings.TrimSpace(s.String())
-	if !strings.HasPrefix(trimedStr, "#") {
-		strs = append(strs, trimedStr)
-	}
+	strs = append(strs, trimedStr)
 	return strs
 }
 

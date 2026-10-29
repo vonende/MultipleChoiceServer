@@ -1,5 +1,6 @@
 # Einstellungen für den Test haben das folgende Format:
 # ! ; Titel des Tests ; Testdauer ; zurück
+# Diese Zeile muss vor allen Fragen stehen.
 # Das Ausrufezeichen und die Semikolons sind obligatorisch. 
 # Leerzeichen oder Tabs neben den Semikolons werden gefiltert.
 # Ist das einzelne Wort "zurück" mit angegeben, können Schüler beim Test zu den
@@ -53,4 +54,4 @@ Katze;
 Spinne;
 Hund;
 Fisch;
-A=1 B=0 C=1 D=-9 MAX=3
+A=1 B=0 C=1 D=-9 MAX=2
