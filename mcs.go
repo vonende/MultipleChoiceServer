@@ -509,14 +509,14 @@ func ladeFragen(filename string) ([]Frage, error) {
 
 		switch {
 		case typ == "SINGLE":
-			frage.Punktwerte = parsePunktwerte(pktValue)
+			frage.Punktwerte = parsePunktwerte(len(frage.Optionen), pktValue)
 			for _, value := range frage.Punktwerte {
 				pkt = max(pkt, value)
 			}
 			frage.Punkte = pkt
 			csv.WriteString(fmt.Sprintf("%d;", pkt))
 		case typ == "MULTI":
-			frage.Punktwerte = parsePunktwerte(pktValue)
+			frage.Punktwerte = parsePunktwerte(len(frage.Optionen), pktValue)
 			for str, value := range frage.Punktwerte {
 				if value > 0 {
 					pkt += value
@@ -547,7 +547,7 @@ func ladeFragen(filename string) ([]Frage, error) {
 
 // parsePunktwerte parst eine Zeichenkette mit Punktwerten im Format "A=1 B=0 C=-1"
 // und gibt eine Map zurück, die die Buchstaben den entsprechenden Punktwerten zuordnet.
-func parsePunktwerte(str string) map[string]int {
+func parsePunktwerte(anz int, str string) map[string]int {
 	result := make(map[string]int)
 	if str == "" {
 		return result
@@ -571,6 +571,15 @@ func parsePunktwerte(str string) map[string]int {
 		}
 		result[key] = wert
 	}
+
+	// Fehlende Bewertungen mit null Punkten in der map ergänzen
+	for i := 0; i < anz; i++ {
+		_, ok := result[string(rune('A'+i))]
+		if !ok {
+			result[string(rune('A'+i))] = 0
+		}
+	}
+
 	//log.Println(result)
 	return result
 }
