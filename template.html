@@ -185,6 +185,16 @@
 
     <script>
         let totalSeconds = 0;
+        let testSubmitted = false;
+
+        function submitTest() {
+            if (testSubmitted) {
+                return;
+            }
+
+            testSubmitted = true;
+            document.getElementById('test-form').submit();
+        }
         
         function updateTimer() {
             let m = Math.floor(totalSeconds / 60);
@@ -192,18 +202,12 @@
             if (s < 10) s = "0" + s;
             document.getElementById("timer-display").innerText = m + ":" + s;
             if (totalSeconds <= 0) {
-                document.getElementById("test-form").submit();
+                submitTest();
             } else {
                 totalSeconds--;
                 setTimeout(updateTimer, 1000);
             }
         }
-
-        document.getElementById('end-btn').addEventListener('click', () => {
- //           if (confirm("Bist du sicher, dass du den Test beenden und abgeben möchtest?")) {
-                document.getElementById('test-form').submit();
- //           }
-        });
 
         document.getElementById('back-btn').addEventListener('click', () => {
             const currentDiv = document.querySelector('.test-content .frage-box.aktiv');
@@ -312,10 +316,8 @@
             } else if (document.mozCancelFullScreen) { // Firefox
                 document.mozCancelFullScreen();
             }
-            document.getElementById('test-form').submit();
+            submitTest();
         });
-
-        let testSubmitted = false;
 
         // 5. Betrugsschutz: Erkennen, wenn der User die ESC-Taste drückt ...
         function handleFullscreenChange() {
@@ -323,9 +325,7 @@
                 return;
             }
             // User hat das Vollbild unerlaubt verlassen
-            testSubmitted = true;
-            document.getElementById('test-form').submit();
-            
+            submitTest();
         }
 
         document.addEventListener('fullscreenchange', handleFullscreenChange);
@@ -340,8 +340,7 @@
                 return;
             }
 
-            testSubmitted = true;
-            document.getElementById('test-form').submit();
+            submitTest();
         }
 
         window.addEventListener('blur', submitOnBrowserBlur);

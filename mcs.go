@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -43,8 +45,10 @@ type Frage struct {
 }
 
 type AktiveTests struct {
-	Schueler   string
-	TestBeginn time.Time
+	Schueler      string
+	SessionID     string
+	TestBeginn    time.Time
+	InBearbeitung bool
 }
 
 // TestDaten enthält die Testeinstellungen und die Liste der Fragen.
@@ -216,8 +220,17 @@ func handleStartTest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var sessionBytes [16]byte
+	if _, err := cryptorand.Read(sessionBytes[:]); err != nil {
+		log.Printf("Fehler beim Erzeugen der Testsession für %s: %v", req.Name, err)
+		http.Error(w, "Testsession konnte nicht gestartet werden.", http.StatusInternalServerError)
+		return
+	}
+	sessionID := hex.EncodeToString(sessionBytes[:])
+
 	aktiverTest := AktiveTests{
 		Schueler:   req.Name,
+		SessionID:  sessionID,
 		TestBeginn: time.Now(),
 	}
 
@@ -243,6 +256,7 @@ func handleStartTest(w http.ResponseWriter, r *http.Request) {
 	// Der Wert des Timers wird in einem versteckten Input-Feld gespeichert, damit das JavaScript darauf zugreifen kann.
 	fmt.Fprintf(w, `<input type="hidden" id="timer-dauer" value="%d">`, testdaten.TestDauerMinuten)
 	fmt.Fprintf(w, `<input type="hidden" id="zurueck" value="%t">`, testdaten.Zurueck)
+	fmt.Fprintf(w, `<input type="hidden" name="sessionID" value="%s">`, sessionID)
 
 	fmt.Fprintf(w, "<p>Name: <strong>%s</strong></p>", template.HTMLEscapeString(req.Name))
 
@@ -289,21 +303,44 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// String Builder für den Bericht
-	var bericht strings.Builder
-	var csv strings.Builder
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Ungültige Abgabedaten.", http.StatusBadRequest)
+		return
+	}
 
-	r.ParseForm()
-	name := r.FormValue("schuelerName")
-	index, gefunden := sucheAktivenTest(name)
-	autoPunkte := 0
-	maxAutoPunkte := 0
+	sessionID := r.FormValue("sessionID")
+	mutex.Lock()
+	index, gefunden := sucheAktivenTest(sessionID)
+	if !gefunden {
+		mutex.Unlock()
+		log.Printf("Unbekannte oder bereits abgegebene Testsitzung: %s", sessionID)
+		http.Error(w, "Diese Testabgabe wurde bereits verarbeitet oder die Sitzung ist unbekannt.", http.StatusConflict)
+		return
+	}
+	if testdaten.aktiveTests[index].InBearbeitung {
+		mutex.Unlock()
+		http.Error(w, "Diese Testabgabe wird bereits verarbeitet.", http.StatusConflict)
+		return
+	}
+	testdaten.aktiveTests[index].InBearbeitung = true
+	aktiverTest := testdaten.aktiveTests[index]
+	mutex.Unlock()
+
+	name := aktiverTest.Schueler
+	testBeginn := aktiverTest.TestBeginn
+	ende := time.Now()
+	dauer := ende.Sub(testBeginn).Truncate(time.Second)
 	IP := getClientIP(r)
 
-	csv.WriteString(fmt.Sprintf("%s; %s; %s; %s; %s;", name, IP, testdaten.aktiveTests[index].TestBeginn.Format(time.DateTime), time.Now().Format(time.DateTime), time.Since(testdaten.aktiveTests[index].TestBeginn).Truncate(time.Second)))
+	var bericht strings.Builder
+	var csv strings.Builder
+	autoPunkte := 0
+	maxAutoPunkte := 0
+
+	csv.WriteString(fmt.Sprintf("%s; %s; %s; %s; %s;", name, IP, testBeginn.Format(time.DateTime), ende.Format(time.DateTime), dauer))
 
 	bericht.WriteString("\n\n================================================================================\n")
-	bericht.WriteString(fmt.Sprintf("NAME:   %s\nBEGINN: %s\nENDE:   %s\nDAUER:  %s\nIP:     %s\n", name, testdaten.aktiveTests[index].TestBeginn.Format(time.DateTime), time.Now().Format(time.DateTime), time.Since(testdaten.aktiveTests[index].TestBeginn).Truncate(time.Second), IP))
+	bericht.WriteString(fmt.Sprintf("NAME:   %s\nBEGINN: %s\nENDE:   %s\nDAUER:  %s\nIP:     %s\n", name, testBeginn.Format(time.DateTime), ende.Format(time.DateTime), dauer, IP))
 
 	for i, frage := range testdaten.Fragen {
 		bericht.WriteString("--------------------------------------------------------------------------------\n")
@@ -337,13 +374,31 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 	bericht.WriteString(fmt.Sprintf("AUTO-WERTUNG: %d / %d Punkte\n", autoPunkte, maxAutoPunkte))
 	bericht.WriteString("================================================================================\n")
 
-	if gefunden {
+	if err := speichereErgebnis(bericht.String(), csv.String()); err != nil {
+		mutex.Lock()
+		if index, gefunden := sucheAktivenTest(sessionID); gefunden {
+			testdaten.aktiveTests[index].InBearbeitung = false
+		}
+		mutex.Unlock()
+		log.Printf("Fehler beim Speichern der Abgabe von %s: %v", name, err)
+		http.Error(w, "Die Antworten konnten nicht gespeichert werden. Bitte wende dich an die Lehrkraft.", http.StatusInternalServerError)
+		return
+	}
 
-		// Speichern
-		speichereErgebnis(bericht.String(), csv.String())
+	mutex.Lock()
+	index, gefunden = sucheAktivenTest(sessionID)
+	if !gefunden {
+		mutex.Unlock()
+		log.Printf("Testsitzung %s ist nach erfolgreichem Speichern nicht mehr aktiv.", sessionID)
+		http.Error(w, "Die Abgabe wurde gespeichert, aber der Sitzungsstatus konnte nicht aktualisiert werden.", http.StatusInternalServerError)
+		return
+	}
+	testdaten.aktiveTests = slices.Delete(testdaten.aktiveTests, index, index+1)
+	testdaten.AnzSchueler = len(testdaten.aktiveTests)
+	log.Printf("%s hat den Test abgegeben. Es sind noch %d Schüler aktiv.\n", name, testdaten.AnzSchueler)
+	mutex.Unlock()
 
-		// Feedback an Schüler
-		fmt.Fprint(w, `
+	fmt.Fprint(w, `
 						<!DOCTYPE html>
 						<html lang="de">
 						<head>
@@ -352,33 +407,11 @@ func handleSubmit(w http.ResponseWriter, r *http.Request) {
 						</head>
 						<body>
 							<p>Deine Antworten wurden gespeichert.</p>`)
-		fmt.Fprintf(w, "<p>Deine automatisierte Auswertung der Multiple-Choice-Fragen: <strong>%d / %d</strong> Punkten.</p>", autoPunkte, maxAutoPunkte)
-		fmt.Fprint(w, `
+	fmt.Fprintf(w, "<p>Deine automatisierte Auswertung der Multiple-Choice-Fragen: <strong>%d / %d</strong> Punkten.</p>", autoPunkte, maxAutoPunkte)
+	fmt.Fprint(w, `
 							<br><a href="/">Zum Start</a>
 						</body>
 					`)
-		mutex.Lock()
-		testdaten.AnzSchueler--
-		log.Printf("%s hat den Test abgegeben. Es sind noch %d Schüler aktiv.\n", name, testdaten.AnzSchueler)
-		testdaten.aktiveTests = slices.Delete(testdaten.aktiveTests, index, index+1)
-		mutex.Unlock()
-
-	} else {
-		fmt.Fprint(w, `
-					<!DOCTYPE html>
-					<html lang="de">
-					<head>
-						<meta charset="UTF-8">
-						<meta name="viewport" content="width=device-width, initial-scale=1.0">
-					</head>
-					<body>
-						<p style="color: red"><strong>Du musst dich erst anmelden.</strong></p>
-						<br><a href="/">Zum Start</a>
-					</body>
-					`)
-		log.Printf("%s hat versucht abzugeben, obwohl er nicht angemeldet ist.", name)
-		log.Print(bericht.String())
-	}
 }
 
 // ********************************************
@@ -540,8 +573,10 @@ func ladeFragen(filename string) ([]Frage, error) {
 		fragenCounter++
 		result = append(result, frage)
 	}
-	csv.WriteString("\n")               // Zeilenumbruch am Ende der Zeile im CSV
-	speichereErgebnis("", csv.String()) // Speichern der CSV-Datei mit den Punktzahlen
+	csv.WriteString("\n") // Zeilenumbruch am Ende der Zeile im CSV
+	if err := speichereErgebnis("", csv.String()); err != nil {
+		return nil, fmt.Errorf("Punktzahlen konnten nicht gespeichert werden: %w", err)
+	}
 	return result, nil
 }
 
@@ -585,32 +620,37 @@ func parsePunktwerte(anz int, str string) map[string]int {
 }
 
 // speichereErgebnis speichert den Bericht und die CSV-Daten in den entsprechenden Dateien.
-func speichereErgebnis(bericht string, csv string) {
+func speichereErgebnis(bericht string, csv string) error {
 	mutex.Lock()
 	defer mutex.Unlock()
 	if bericht != "" {
 		f, err := os.OpenFile(filterDateiname(testdaten.Ergebnisdatei+".txt"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Println("Fehler beim Speichern des Berichts:", err)
-			return
+			return fmt.Errorf("Berichtdatei konnte nicht geöffnet werden: %w", err)
 		}
-		defer f.Close()
 		if _, err := f.WriteString(bericht); err != nil {
-			log.Println("Fehler beim Schreiben des Berichts:", err)
+			f.Close()
+			return fmt.Errorf("Bericht konnte nicht geschrieben werden: %w", err)
+		}
+		if err := f.Close(); err != nil {
+			return fmt.Errorf("Berichtdatei konnte nicht geschlossen werden: %w", err)
 		}
 	}
 
 	if csv != "" {
 		f2, err := os.OpenFile(filterDateiname(testdaten.Ergebnisdatei+".csv"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
-			log.Println("Fehler beim Speichern des CSV:", err)
-			return
+			return fmt.Errorf("CSV-Datei konnte nicht geöffnet werden: %w", err)
 		}
-		defer f2.Close()
 		if _, err := f2.WriteString(csv); err != nil {
-			log.Println("Fehler beim Schreiben des CSV:", err)
+			f2.Close()
+			return fmt.Errorf("CSV konnte nicht geschrieben werden: %w", err)
+		}
+		if err := f2.Close(); err != nil {
+			return fmt.Errorf("CSV-Datei konnte nicht geschlossen werden: %w", err)
 		}
 	}
+	return nil
 }
 
 // *******************************************
@@ -766,10 +806,10 @@ func splitLine(str string) []string {
 	return strs
 }
 
-// sucheAktivenTest sucht nach einem aktiven Test für den angegebenen Schülernamen.
-func sucheAktivenTest(name string) (int, bool) {
+// sucheAktivenTest sucht nach einer aktiven Sitzung anhand ihrer eindeutigen ID.
+func sucheAktivenTest(sessionID string) (int, bool) {
 	for i, s := range testdaten.aktiveTests {
-		if s.Schueler == name {
+		if s.SessionID == sessionID {
 			return i, true
 		}
 	}
